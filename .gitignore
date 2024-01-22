@@ -1,0 +1,4 @@
+cmake-build-debug/
+.idea/
+datasets/generated_blob_dataset_4m.csv
+datasets/generated_blob_dataset_40m.csv
