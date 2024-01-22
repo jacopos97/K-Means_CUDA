@@ -2,16 +2,14 @@
 #include "INIReader.h"
 #include <fstream>
 #include <sstream>
-#include <vector>
 #include <chrono>
 #include <cmath>
-#include <unordered_map>
 #include <cuda_runtime_api.h>
 
 using namespace std;
 using namespace chrono;
 
-static const int POINTS_NUMBER = 40000000;
+static const int POINTS_NUMBER = 400000;
 static const int CLUSTER_NUMBER = 4;
 static const string CONFIG_FILE_PATH = "../config_files/config_sets.ini";
 static const string DESIRED_CONFIG = to_string(CLUSTER_NUMBER) + "_cluster";
@@ -32,28 +30,16 @@ void freeDataPoints(DataPoints &dataPoints);
 void freeDevDataPoints(float *&devPointX, float *&devPointY, float *&devPointZ);
 void allocPointDevMemory(float *&hostPointX, float *&hostPointY, float *&hostPointZ, float *&devPointX, float *&devPointY, float *&devPointZ, int size);
 __global__ void assignPointToCluster(const float* devPointX, const float* devPointY, const float* devPointZ, float* devCentroidX, float* devCentroidY, float* devCentroidZ, float* devNewCentroidX, float* devNewCentroidY, float* devNewCentroidZ, float* devClustersSize);
-//__global__ void assignPointToCluster(float *&devPointX, float *&devPointY, float *&devPointZ, float *&devCentroidX, float *&devCentroidY, float *&devCentroidZ, float *&devNewCentroidX, float *&devNewCentroidY, float *&devNewCentroidZ, float *&devClustersSize);
+void getNewCentroidsAndClustersSize(DataPoints &centroids, float *clustersSize, const float *devClustersSize, const float *devNewCentroidX, const float *devNewCentroidY, const float *devNewCentroidZ);
+void updateGlobalMemory(const DataPoints &centroids, float *devCentroidX, float *devCentroidY, float *devCentroidZ, const float *defaultArray, float *devClustersSize, float *devNewCentroidX, float *devNewCentroidY, float *devNewCentroidZ);
 
 int main() {
 
     DataPoints dataPoints{};
     if(!readDatasetFromFile(dataPoints)) return -1;
-    /*for(int i=0; i<POINTS_NUMBER; i++){
-        cout << "(" << dataPoints.x[i] << ", " << dataPoints.y[i] << ", " << dataPoints.z[i] << ")" << endl;
-    }*/
 
     float *devPointX, *devPointY, *devPointZ;
     allocPointDevMemory(dataPoints.x, dataPoints.y, dataPoints.z, devPointX, devPointY, devPointZ, POINTS_NUMBER);
-    /*auto* x = new float[POINTS_NUMBER];
-    auto* y = new float[POINTS_NUMBER];
-    auto* z = new float[POINTS_NUMBER];
-    cudaMemcpy(x, devPointX, POINTS_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(y, devPointY, POINTS_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(z, devPointZ, POINTS_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    for(int i=0; i<POINTS_NUMBER; i++) {
-        cout<<x[i]<<" "<<y[i]<<" "<<z[i]<<" "<<endl;
-    }
-    delete[] x,y,z;*/
 
     DataPoints centroids{};
     if (!initializeCentroids(centroids, CONFIG_FILE_PATH, DESIRED_CONFIG)) return -1;
@@ -61,50 +47,15 @@ int main() {
 
     float *devCentroidX, *devCentroidY, *devCentroidZ;
     allocPointDevMemory(centroids.x, centroids.y, centroids.z, devCentroidX, devCentroidY, devCentroidZ, CLUSTER_NUMBER);
-    /*auto* x = new float[CLUSTER_NUMBER];
-    auto* y = new float[CLUSTER_NUMBER];
-    auto* z = new float[CLUSTER_NUMBER];
-    cudaMemcpy(x, devCentroidX, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(y, devCentroidY, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(z, devCentroidZ, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    for(int i=0; i<CLUSTER_NUMBER; i++) {
-        cout<<x[i]<<" "<<y[i]<<" "<<z[i]<<" "<<endl;
-    }
-    delete[] x,y,z;*/
 
     auto* defaultArray = new float[CLUSTER_NUMBER]();
     auto* clustersSize = new float[CLUSTER_NUMBER]();
     float* devClustersSize;
     cudaMalloc((void**)&devClustersSize, CLUSTER_NUMBER*sizeof(float));
     cudaMemcpy(devClustersSize, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
-    /*auto* x = new float[CLUSTER_NUMBER];
-    cudaMemcpy(x, devClustersSize, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    for(int i=0; i<CLUSTER_NUMBER; i++) {
-        cout<<x[i]<<endl;
-    }
-    delete[] x;*/
 
     float *devNewCentroidX, *devNewCentroidY, *devNewCentroidZ;
     allocPointDevMemory(defaultArray, defaultArray, defaultArray, devNewCentroidX, devNewCentroidY, devNewCentroidZ, CLUSTER_NUMBER);
-    /*auto* x = new float[CLUSTER_NUMBER];
-    auto* y = new float[CLUSTER_NUMBER];
-    auto* z = new float[CLUSTER_NUMBER];
-    cudaMemcpy(x, devNewCentroidX, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(y, devNewCentroidY, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    cudaMemcpy(z, devNewCentroidZ, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-    for(int i=0; i<CLUSTER_NUMBER; i++) {
-        cout<<x[i]<<" "<<y[i]<<" "<<z[i]<<" "<<endl;
-    }
-    delete[] x;
-    delete[] y;
-    delete[] z;*/
-
-    /*DataPoints newCentroids{};
-    newCentroids.x = (float*)malloc(CLUSTER_NUMBER * sizeof(float));
-    newCentroids.y = (float*)malloc(CLUSTER_NUMBER * sizeof(float));
-    newCentroids.z = (float*)malloc(CLUSTER_NUMBER * sizeof(float));*/
-
-
     auto startTime = high_resolution_clock::now();
 
     for (int iteration = 0; iteration < ITERATION_NUMBER; iteration++) {
@@ -113,30 +64,9 @@ int main() {
         dim3 dimBlock(THREADS_PER_BLOCK);
         dim3 dimGrid((POINTS_NUMBER+THREADS_PER_BLOCK-1) / THREADS_PER_BLOCK);
         assignPointToCluster <<<dimGrid,dimBlock,7*CLUSTER_NUMBER*sizeof(float)>>> (devPointX,devPointY,devPointZ,devCentroidX,devCentroidY,devCentroidZ,devNewCentroidX,devNewCentroidY,devNewCentroidZ,devClustersSize);
-        //assignPointToCluster <<<dimGrid,dimBlock>>> (devPointX,devPointY,devPointZ,devCentroidX,devCentroidY,devCentroidZ,devClustersSize);
         cudaDeviceSynchronize();
-        /*auto* a = new float[CLUSTER_NUMBER];
-        auto* b = new float[CLUSTER_NUMBER];
-        auto* c = new float[CLUSTER_NUMBER];
-        cudaMemcpy(a, devCentroidX, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-        cudaMemcpy(b, devCentroidY, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-        cudaMemcpy(c, devCentroidZ, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-        for(int i=0; i<CLUSTER_NUMBER; i++) {
-            cout<<a[i]<<" "<<b[i]<<" "<<c[i]<<" "<<endl;
-        }
-        delete[] a;
-        delete[] b;
-        delete[] c;*/
 
-        cudaMemcpy(centroids.x, devNewCentroidX, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(centroids.y, devNewCentroidY, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(centroids.z, devNewCentroidZ, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(clustersSize,devClustersSize, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
-        /*printCentroids(newCentroids);
-        cout<<endl;
-        for (int i = 0; i < CLUSTER_NUMBER; i++) {
-            cout<<clustersSize[i]<<" ";
-        }*/
+        getNewCentroidsAndClustersSize(centroids, clustersSize, devClustersSize, devNewCentroidX, devNewCentroidY, devNewCentroidZ);
 
         for (int i = 0; i < CLUSTER_NUMBER; i++) {
             centroids.x[i] = centroids.x[i] / clustersSize[i];
@@ -144,13 +74,7 @@ int main() {
             centroids.z[i] = centroids.z[i] / clustersSize[i];
         }
 
-        cudaMemcpy(devCentroidX, centroids.x, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devCentroidY, centroids.y, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devCentroidZ, centroids.z, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devNewCentroidX, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devNewCentroidY, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devNewCentroidZ, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(devClustersSize, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
+        updateGlobalMemory(centroids, devCentroidX, devCentroidY, devCentroidZ, defaultArray, devClustersSize, devNewCentroidX, devNewCentroidY, devNewCentroidZ);
 
         cout << endl;
         for (int i = 0; i < CLUSTER_NUMBER; i++) {
@@ -174,9 +98,25 @@ int main() {
     freeDevDataPoints(devNewCentroidX,devNewCentroidY,devNewCentroidZ);
     cudaFree(devClustersSize);
     devClustersSize = nullptr;
-    //freeDataPoints(newCentroids);
 
     return 0;
+}
+
+void updateGlobalMemory(const DataPoints &centroids, float *devCentroidX, float *devCentroidY, float *devCentroidZ, const float *defaultArray, float *devClustersSize, float *devNewCentroidX, float *devNewCentroidY, float *devNewCentroidZ) {
+    cudaMemcpy(devCentroidX, centroids.x, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devCentroidY, centroids.y, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devCentroidZ, centroids.z, CLUSTER_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devNewCentroidX, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devNewCentroidY, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devNewCentroidZ, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(devClustersSize, defaultArray, CLUSTER_NUMBER*sizeof(float), cudaMemcpyHostToDevice);
+}
+
+void getNewCentroidsAndClustersSize(DataPoints &centroids, float *clustersSize, const float *devClustersSize, const float *devNewCentroidX, const float *devNewCentroidY, const float *devNewCentroidZ) {
+    cudaMemcpy(centroids.x, devNewCentroidX, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(centroids.y, devNewCentroidY, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(centroids.z, devNewCentroidZ, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(clustersSize,devClustersSize, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
 }
 
 void allocPointDevMemory(float *&hostPointX, float *&hostPointY, float *&hostPointZ, float *&devPointX, float *&devPointY, float *&devPointZ, int size) {
@@ -289,16 +229,8 @@ void printCentroids(DataPoints& centroids) {
 }
 
 __global__ void assignPointToCluster(const float* devPointX, const float* devPointY, const float* devPointZ, float* devCentroidX, float* devCentroidY, float* devCentroidZ, float* devNewCentroidX, float* devNewCentroidY, float* devNewCentroidZ, float* devClustersSize) {
-
     extern __shared__ float sharedMem[];
-
     int tid = blockIdx.x*blockDim.x+threadIdx.x;
-
-    /*if (tid < POINTS_NUMBER){
-        printf("Thread %d: Hello from thread %d in block %d\n", tid, threadIdx.x, blockIdx.x);
-        //devClustersSize[tid] = tid;
-        //printf("%f\n", devClustersSize[tid]);
-    }*/
     if (threadIdx.x == 0) {
         for (int i = 0; i < CLUSTER_NUMBER; i++) {
             sharedMem[i] = devCentroidX[i];
@@ -310,9 +242,7 @@ __global__ void assignPointToCluster(const float* devPointX, const float* devPoi
             sharedMem[6*CLUSTER_NUMBER + i] = 0;
         }
     }
-
     __syncthreads();
-
     if (tid < POINTS_NUMBER) {
         float x = devPointX[tid];
         float y = devPointY[tid];
@@ -335,9 +265,7 @@ __global__ void assignPointToCluster(const float* devPointX, const float* devPoi
         atomicAdd(&(sharedMem[5*CLUSTER_NUMBER + clusterType]), z);
         atomicAdd(&(sharedMem[6*CLUSTER_NUMBER + clusterType]), 1);
     }
-
     __syncthreads();
-
     if (threadIdx.x==0 && tid<POINTS_NUMBER) {
         for (int i = 0; i < CLUSTER_NUMBER; i++) {
             atomicAdd(&(devNewCentroidX[i]), sharedMem[3*CLUSTER_NUMBER + i]);
