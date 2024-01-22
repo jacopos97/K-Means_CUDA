@@ -11,10 +11,11 @@ using namespace chrono;
 
 static const int POINTS_NUMBER = 400000;
 static const int CLUSTER_NUMBER = 4;
-static const string CONFIG_FILE_PATH = "../config_files/config_sets.ini";
-static const string DESIRED_CONFIG = to_string(CLUSTER_NUMBER) + "_cluster";
 static const int ITERATION_NUMBER = 10;
 static const int THREADS_PER_BLOCK = 128;
+
+static const string CONFIG_FILE_PATH = "../config_files/config_sets.ini";
+static const string DESIRED_CONFIG = to_string(CLUSTER_NUMBER) + "_cluster";
 
 struct DataPoints {
     float* x;
