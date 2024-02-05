@@ -9,10 +9,10 @@
 using namespace std;
 using namespace chrono;
 
-static const int POINTS_NUMBER = 400000;
+static const int POINTS_NUMBER = 4000000;
 static const int CLUSTER_NUMBER = 4;
 static const int ITERATION_NUMBER = 10;
-static const int THREADS_PER_BLOCK = 128;
+static const int THREADS_PER_BLOCK = 256;
 
 static const string CONFIG_FILE_PATH = "../config_files/config_sets.ini";
 static const string DESIRED_CONFIG = to_string(CLUSTER_NUMBER) + "_cluster";
@@ -39,6 +39,7 @@ int main() {
     DataPoints dataPoints{};
     if(!readDatasetFromFile(dataPoints)) return -1;
 
+    auto startTime = high_resolution_clock::now();
     float *devPointX, *devPointY, *devPointZ;
     allocPointDevMemory(dataPoints.x, dataPoints.y, dataPoints.z, devPointX, devPointY, devPointZ, POINTS_NUMBER);
 
@@ -57,7 +58,8 @@ int main() {
 
     float *devNewCentroidX, *devNewCentroidY, *devNewCentroidZ;
     allocPointDevMemory(defaultArray, defaultArray, defaultArray, devNewCentroidX, devNewCentroidY, devNewCentroidZ, CLUSTER_NUMBER);
-    auto startTime = high_resolution_clock::now();
+
+    auto startTime1 = high_resolution_clock::now();
 
     for (int iteration = 0; iteration < ITERATION_NUMBER; iteration++) {
         cout << endl << "Iteration " << iteration + 1 << ":" << endl;
@@ -88,7 +90,9 @@ int main() {
 
     auto endTime = high_resolution_clock::now();
     auto time = duration_cast<microseconds>(endTime - startTime).count() / 1000.f;
-    cout << "Duration: " << time << " ms" << endl;
+    cout << "Duration pre global memory allocation: " << time << " ms" << endl;
+    auto time1 = duration_cast<microseconds>(endTime - startTime1).count() / 1000.f;
+    cout << "Duration post global memory allocation: " << time1 << " ms" << endl;
 
     freeDataPoints(dataPoints);
     freeDevDataPoints(devPointX,devPointY,devPointZ);
@@ -117,7 +121,7 @@ void getNewCentroidsAndClustersSize(DataPoints &centroids, float *clustersSize, 
     cudaMemcpy(centroids.x, devNewCentroidX, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
     cudaMemcpy(centroids.y, devNewCentroidY, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
     cudaMemcpy(centroids.z, devNewCentroidZ, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(clustersSize,devClustersSize, CLUSTER_NUMBER*sizeof(float),cudaMemcpyDeviceToHost);
+    cudaMemcpy(clustersSize,devClustersSize, CLUSTER_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void allocPointDevMemory(float *&hostPointX, float *&hostPointY, float *&hostPointZ, float *&devPointX, float *&devPointY, float *&devPointZ, int size) {
@@ -267,16 +271,12 @@ __global__ void assignPointToCluster(const float* devPointX, const float* devPoi
         atomicAdd(&(sharedMem[6*CLUSTER_NUMBER + clusterType]), 1);
     }
     __syncthreads();
-    if (threadIdx.x==0 && tid<POINTS_NUMBER) {
+    if (threadIdx.x==0) {
         for (int i = 0; i < CLUSTER_NUMBER; i++) {
             atomicAdd(&(devNewCentroidX[i]), sharedMem[3*CLUSTER_NUMBER + i]);
             atomicAdd(&(devNewCentroidY[i]), sharedMem[4*CLUSTER_NUMBER + i]);
             atomicAdd(&(devNewCentroidZ[i]), sharedMem[5*CLUSTER_NUMBER + i]);
             atomicAdd(&(devClustersSize[i]), sharedMem[6*CLUSTER_NUMBER + i]);
-            sharedMem[3*CLUSTER_NUMBER + i] = 0;
-            sharedMem[4*CLUSTER_NUMBER + i] = 0;
-            sharedMem[5*CLUSTER_NUMBER + i] = 0;
-            sharedMem[6*CLUSTER_NUMBER + i] = 0;
         }
     }
 }
