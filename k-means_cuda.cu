@@ -9,7 +9,7 @@
 using namespace std;
 using namespace chrono;
 
-static const int POINTS_NUMBER = 4000000;
+static const int POINTS_NUMBER = 4000;
 static const int CLUSTER_NUMBER = 4;
 static const int ITERATION_NUMBER = 10;
 static const int THREADS_PER_BLOCK = 256;
